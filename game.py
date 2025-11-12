@@ -1,12 +1,17 @@
 import tkinter as tk
 import random
+import time
+import threading
 
+# -------------------------
 # CONFIG
+# -------------------------
 WIDTH, HEIGHT = 480, 700
 PLAYER_W, PLAYER_H = 60, 20
 BLOCK_W, BLOCK_H = 50, 20
 SPAWN_INTERVAL = 1000  # ms
 MOVE_SPEED = 7
+DIFFICULTY_SCALE = 0.98  # blocks get faster each spawn
 
 COLORS = {
     "bg_top": "#081C24",
@@ -16,21 +21,25 @@ COLORS = {
     "accent": "#FFD700",
 }
 
+# -------------------------
+# MAIN CLASS
+# -------------------------
 class DodgeBlocks:
     def __init__(self, root):
         self.root = root
-        self.root.title("🚀 Dodge the Blocks Deluxe")
+        self.root.title("Dodge the Blocks")
         self.root.geometry(f"{WIDTH}x{HEIGHT}")
         self.root.minsize(400, 550)
 
         self.canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
-        self.state = "menu"
+        self.state = "menu"  # menu, playing, gameover
         self.score = 0
         self.best_score = 0
         self.blocks = []
         self.keys = set()
+        self.block_speed = 4
 
         self.width = WIDTH
         self.height = HEIGHT
@@ -39,44 +48,70 @@ class DodgeBlocks:
         self.root.bind("<KeyRelease>", self.key_up)
         self.root.bind("<Configure>", self.on_resize)
 
-        self.draw_menu()
+        self.draw_menu(animated=True)
 
+    # -------------------------
     # MENU SCREEN
-    def draw_menu(self):
+    # -------------------------
+    def draw_menu(self, animated=False):
         self.canvas.delete("all")
         self.draw_background_gradient()
-        self.canvas.create_text(self.width/2, self.height/3,
-                                text="🚀 DODGE THE BLOCKS 🚀",
-                                fill=COLORS["accent"],
-                                font=("Helvetica", 28, "bold"))
-        self.canvas.create_text(self.width/2, self.height/2,
-                                text="← → to move\nSPACE to start",
-                                fill=COLORS["text"],
-                                font=("Helvetica", 14),
-                                justify="center")
+        self.title_y = self.height / 3
+        self.title_direction = 1
 
-    # RESIZE
+        self.title_text = self.canvas.create_text(
+            self.width / 2, self.title_y,
+            text="🚀 DODGE THE BLOCKS 🚀",
+            fill=COLORS["accent"],
+            font=("Helvetica", 28, "bold")
+        )
+
+        self.instruction_text = self.canvas.create_text(
+            self.width / 2, self.height / 2,
+            text="← →  to move\nSPACE to start",
+            fill=COLORS["text"],
+            font=("Helvetica", 14),
+            justify="center"
+        )
+
+        if animated:
+            self.animate_title()
+
+    def animate_title(self):
+        if self.state != "menu":
+            return
+        # Bounce the title up and down
+        self.title_y += self.title_direction * 2
+        if self.title_y > self.height/3 + 15 or self.title_y < self.height/3 - 15:
+            self.title_direction *= -1
+        self.canvas.coords(self.title_text, self.width/2, self.title_y)
+        self.root.after(50, self.animate_title)
+
+    # -------------------------
+    # RESIZE HANDLER
+    # -------------------------
     def on_resize(self, event):
         self.width, self.height = event.width, event.height
         if self.state == "menu":
             self.draw_menu()
 
-    # SCALE FONT
-    def scale_font(self, base_size):
-        return max(8, int(base_size * self.width / WIDTH))
-
+    # -------------------------
     # START GAME
+    # -------------------------
     def start_game(self):
         self.state = "playing"
         self.score = 0
+        self.block_speed = 4
         self.blocks.clear()
         self.canvas.delete("all")
         self.draw_background_gradient()
 
         # PLAYER
-        self.player = self.canvas.create_rectangle(self.width/2-PLAYER_W/2, self.height-80,
-                                                   self.width/2+PLAYER_W/2, self.height-60,
-                                                   fill=COLORS["player"], outline="")
+        self.player = self.canvas.create_rectangle(
+            self.width/2 - PLAYER_W/2, self.height-80,
+            self.width/2 + PLAYER_W/2, self.height-60,
+            fill=COLORS["player"], outline=""
+        )
 
         # SCORE TEXT
         self.score_text = self.canvas.create_text(10, 10, anchor="nw",
@@ -91,7 +126,9 @@ class DodgeBlocks:
         self.spawn_block()
         self.update_game()
 
+    # -------------------------
     # BACKGROUND
+    # -------------------------
     def draw_background_gradient(self):
         self.canvas.delete("bg")
         steps = 80
@@ -106,10 +143,12 @@ class DodgeBlocks:
         def rgb_to_hex(r): return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
         r1,g1,b1 = hex_to_rgb(c1[1:])
         r2,g2,b2 = hex_to_rgb(c2[1:])
-        rgb = (int(r1 + (r2-r1)*t), int(g1+(g2-g1)*t), int(b1+(b2-b1)*t))
+        rgb = (int(r1 + (r2-r1)*t), int(g1 + (g2-g1)*t), int(b1 + (b2-b1)*t))
         return rgb_to_hex(rgb)
 
+    # -------------------------
     # KEY HANDLERS
+    # -------------------------
     def key_down(self, event):
         self.keys.add(event.keysym)
         if event.keysym == "space":
@@ -119,7 +158,9 @@ class DodgeBlocks:
     def key_up(self, event):
         self.keys.discard(event.keysym)
 
+    # -------------------------
     # GAME LOOP
+    # -------------------------
     def update_game(self):
         if self.state != "playing":
             return
@@ -129,25 +170,30 @@ class DodgeBlocks:
         self.canvas.itemconfig(self.score_text, text=f"Score: {self.score}")
         self.root.after(20, self.update_game)
 
+    # -------------------------
     # PLAYER
+    # -------------------------
     def move_player(self):
         if "Left" in self.keys:
             self.canvas.move(self.player, -MOVE_SPEED, 0)
         if "Right" in self.keys:
             self.canvas.move(self.player, MOVE_SPEED, 0)
-        x1,y1,x2,y2 = self.canvas.coords(self.player)
+        x1,_,x2,_ = self.canvas.coords(self.player)
         if x1<0: self.canvas.move(self.player,-x1,0)
         if x2>self.width: self.canvas.move(self.player,self.width-x2,0)
 
+    # -------------------------
     # BLOCKS
+    # -------------------------
     def spawn_block(self):
         if self.state!="playing": return
         x = random.randint(0,self.width-BLOCK_W)
         color = random.choice(["#FF5C58","#FFB26B","#FFD93D","#00C2A8"])
         block = self.canvas.create_rectangle(x,-BLOCK_H, x+BLOCK_W,0, fill=color, outline="")
-        speed = random.randint(3,6)
-        self.blocks.append((block,speed))
-        self.root.after(SPAWN_INTERVAL,self.spawn_block)
+        self.blocks.append((block, self.block_speed))
+        # Gradually increase difficulty
+        self.block_speed /= DIFFICULTY_SCALE
+        self.root.after(SPAWN_INTERVAL, self.spawn_block)
 
     def move_blocks(self):
         survived=[]
@@ -157,11 +203,28 @@ class DodgeBlocks:
             if y2<self.height:
                 survived.append((block,speed))
             else:
-                self.score+=1
+                self.score += 1
+                self.show_score_animation((x1+x2)/2, y1)
                 self.canvas.delete(block)
-        self.blocks=survived
+        self.blocks = survived
 
+    # -------------------------
+    # FLOATING +1 ANIMATION
+    # -------------------------
+    def show_score_animation(self, x, y):
+        text = self.canvas.create_text(x, y, text="+1", fill="#FFD700",
+                                       font=("Helvetica",12,"bold"))
+        def animate(step=0):
+            if step>15:
+                self.canvas.delete(text)
+            else:
+                self.canvas.move(text,0,-2)
+                self.root.after(30, lambda: animate(step+1))
+        animate()
+
+    # -------------------------
     # COLLISION
+    # -------------------------
     def check_collision(self):
         px1,py1,px2,py2 = self.canvas.coords(self.player)
         for block,_ in self.blocks:
@@ -171,9 +234,11 @@ class DodgeBlocks:
                 self.end_game()
                 return
 
+    # -------------------------
     # GAME OVER
+    # -------------------------
     def flash_effect(self):
-        flash=self.canvas.create_rectangle(0,0,self.width,self.height, fill="white", outline="")
+        flash = self.canvas.create_rectangle(0,0,self.width,self.height,fill="white",outline="")
         self.root.update()
         self.root.after(80, lambda:self.canvas.delete(flash))
 
@@ -187,7 +252,10 @@ class DodgeBlocks:
                                 justify="center")
         self.canvas.itemconfig(self.best_text,text=f"Best: {self.best_score}")
 
+# -------------------------
+# MAIN
+# -------------------------
 if __name__=="__main__":
-    root=tk.Tk()
+    root = tk.Tk()
     DodgeBlocks(root)
     root.mainloop()
