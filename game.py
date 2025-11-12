@@ -1,3 +1,6 @@
+# I acknowledge the use of ChatGPT (version GPT-5 Mini, OpenAI) 
+# to assist with code Enhnacement for this file.
+
 import tkinter as tk
 import random
 import time
