@@ -1,179 +1,262 @@
-#!/usr/bin/env python3
-# Dodge the Blocks - Enhanced Version
-
 import tkinter as tk
 import random
 import time
-import os
 
-WIDTH, HEIGHT = 500, 600
-PLAYER_W, PLAYER_H = 50, 20
-BLOCK_W, BLOCK_H = 40, 20
-SPAWN_EVERY_MS = 900
-TICK_MS = 16  # ~60 FPS
+# ----------------------------------------
+# CONFIG
+# ----------------------------------------
+DEFAULT_WIDTH = 480
+DEFAULT_HEIGHT = 700
+PLAYER_W, PLAYER_H = 60, 20
+BLOCK_W, BLOCK_H = 50, 20
+SPAWN_INTERVAL = 1000  # ms
 
-HIGHSCORE_FILE = "highscore.txt"
+COLORS = {
+    "bg_top": "#081C24",
+    "bg_bottom": "#133B5C",
+    "player": "#00FFC6",
+    "text": "#FFFFFF",
+    "accent": "#FFD700",
+}
 
-# ---------- Block Class ----------
-class Block:
-    COLORS = ["#444", "#f00", "#0f0"]  # normal, fast, bonus
-    SPEEDS = [3, 6, 4]
-    POINTS = [1, 1, 5]
-
-    def __init__(self, canvas):
-        self.type = random.randint(0, 2)
-        self.speed = self.SPEEDS[self.type]
-        self.points = self.POINTS[self.type]
-        self.canvas = canvas
-        self.x = random.randint(0, WIDTH - BLOCK_W)
-        self.y = -BLOCK_H
-        self.id = canvas.create_rectangle(
-            self.x, self.y, self.x + BLOCK_W, self.y + BLOCK_H,
-            outline="", fill=self.COLORS[self.type]
-        )
-
-    def step(self):
-        self.y += self.speed
-        self.canvas.move(self.id, 0, self.speed)
-
-    def offscreen(self):
-        return self.y > HEIGHT + BLOCK_H
-
-    def bbox(self):
-        return self.canvas.bbox(self.id)
-
-# ---------- Game Class ----------
-class Game:
+# ----------------------------------------
+# MAIN CLASS
+# ----------------------------------------
+class DodgeBlocks:
     def __init__(self, root):
         self.root = root
-        root.title("Dodge the Blocks")
-        self.canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg="#f5f5f5", highlightthickness=0)
-        self.canvas.pack()
+        self.root.title("🚀 Dodge the Blocks Deluxe")
+        self.root.geometry(f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}")
+        self.root.minsize(400, 550)
+        self.root.configure(bg=COLORS["bg_top"])
 
-        # Info Text
-        self.info = self.canvas.create_text(10, 10, anchor="nw", text="", font=("Arial", 12))
+        self.canvas = tk.Canvas(
+            root, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, highlightthickness=0, bg=COLORS["bg_top"]
+        )
+        self.canvas.pack(fill="both", expand=True)
+
+        self.state = "menu"  # menu, playing, gameover
+        self.best_score = 0
+        self.score = 0
+        self.blocks = []
+        self.keys = set()
+
+        self.root.bind("<KeyPress>", self.key_down)
+        self.root.bind("<KeyRelease>", self.key_up)
+        self.root.bind("<Configure>", self.on_resize)
+
+        self.width = DEFAULT_WIDTH
+        self.height = DEFAULT_HEIGHT
+
+        self.draw_menu()
+
+    # ----------------------------------------
+    # MENU SCREEN
+    # ----------------------------------------
+    def draw_menu(self):
+        self.canvas.delete("all")
+        self.draw_background_gradient()
+
+        title_font = self.scale_font(28)
+        info_font = self.scale_font(14)
+        small_font = self.scale_font(10)
+
+        self.canvas.create_text(
+            self.width / 2,
+            self.height / 3,
+            text="🚀 DODGE THE BLOCKS 🚀",
+            fill=COLORS["accent"],
+            font=("Helvetica", title_font, "bold"),
+        )
+
+        self.canvas.create_text(
+            self.width / 2,
+            self.height / 2,
+            text="← →  to move\nSPACE to start",
+            fill=COLORS["text"],
+            font=("Helvetica", info_font),
+            justify="center",
+        )
+
+        self.canvas.create_text(
+            self.width / 2,
+            self.height - 40,
+            text="Tip: Avoid the blocks to earn points!",
+            fill="#BBBBBB",
+            font=("Helvetica", small_font),
+        )
+
+    # ----------------------------------------
+    # RESIZE HANDLER
+    # ----------------------------------------
+    def on_resize(self, event):
+        self.width, self.height = event.width, event.height
+        if self.state == "menu":
+            self.draw_menu()
+
+    def scale_font(self, base_size):
+        """Dynamically scale font sizes depending on window width."""
+        scale = self.width / DEFAULT_WIDTH
+        return max(8, int(base_size * scale))
+
+    # ----------------------------------------
+    # START GAME
+    # ----------------------------------------
+    def start_game(self):
+        self.state = "playing"
+        self.canvas.delete("all")
+        self.draw_background_gradient()
+        self.blocks.clear()
+        self.score = 0
 
         # Player
         self.player = self.canvas.create_rectangle(
-            WIDTH//2-PLAYER_W//2, HEIGHT-60, WIDTH//2+PLAYER_W//2, HEIGHT-60+PLAYER_H,
-            outline="", fill="#2d6cdf"
+            self.width / 2 - PLAYER_W / 2,
+            self.height - 80,
+            self.width / 2 + PLAYER_W / 2,
+            self.height - 60,
+            fill=COLORS["player"],
+            outline="",
         )
 
-        self.dx = 0
-        self.blocks = []
-        self.running = True
-        self.score = 0
-        self.best = self.load_highscore()
-        self.last_spawn_t = time.time()
+        # Score Text
+        self.score_text = self.canvas.create_text(
+            10, 10, anchor="nw", text=f"Score: {self.score}", fill=COLORS["text"], font=("Helvetica", 14, "bold")
+        )
+        self.best_text = self.canvas.create_text(
+            10, 35, anchor="nw", text=f"Best: {self.best_score}", fill=COLORS["accent"], font=("Helvetica", 12, "bold")
+        )
 
-        # Controls
-        root.bind("<KeyPress-Left>", lambda e: self.set_dx(-6))
-        root.bind("<KeyPress-Right>", lambda e: self.set_dx(6))
-        root.bind("<KeyRelease-Left>", lambda e: self.stop_dx(-6))
-        root.bind("<KeyRelease-Right>", lambda e: self.stop_dx(6))
-        root.bind("<space>", self.try_restart)
+        self.spawn_block()
+        self.update_game()
 
-        self.loop()
+    # ----------------------------------------
+    # BACKGROUND GRADIENT
+    # ----------------------------------------
+    def draw_background_gradient(self):
+        steps = 80
+        for i in range(steps):
+            color = self._interpolate_color(COLORS["bg_top"], COLORS["bg_bottom"], i / steps)
+            y1 = i * (self.height / steps)
+            y2 = (i + 1) * (self.height / steps)
+            self.canvas.create_rectangle(0, y1, self.width, y2, outline="", fill=color)
 
-    # ---------- Player Controls ----------
-    def set_dx(self, v):
-        self.dx = v
-    def stop_dx(self, v):
-        if self.dx == v:
-            self.dx = 0
+    def _interpolate_color(self, c1, c2, t):
+        def hex_to_rgb(h): return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+        def rgb_to_hex(r): return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
+        r1, g1, b1 = hex_to_rgb(c1[1:])
+        r2, g2, b2 = hex_to_rgb(c2[1:])
+        rgb = (int(r1 + (r2 - r1) * t), int(g1 + (g2 - g1) * t), int(b1 + (b2 - b1) * t))
+        return rgb_to_hex(rgb)
 
-    # ---------- Restart ----------
-    def try_restart(self, _evt=None):
-        if not self.running:
-            self.reset()
+    # ----------------------------------------
+    # KEYBOARD HANDLERS
+    # ----------------------------------------
+    def key_down(self, event):
+        self.keys.add(event.keysym)
+        if event.keysym == "space":
+            if self.state in ("menu", "gameover"):
+                self.start_game()
 
-    def reset(self):
-        for b in self.blocks:
-            self.canvas.delete(b.id)
-        self.blocks.clear()
-        self.canvas.coords(self.player, WIDTH//2-PLAYER_W//2, HEIGHT-60, WIDTH//2+PLAYER_W//2, HEIGHT-60+PLAYER_H)
-        self.dx = 0
-        self.running = True
-        self.score = 0
-        self.last_spawn_t = time.time()
-        self.canvas.itemconfig(self.info, text="")
+    def key_up(self, event):
+        self.keys.discard(event.keysym)
 
-    # ---------- Spawn & Move ----------
-    def spawn_block(self):
-        self.blocks.append(Block(self.canvas))
+    # ----------------------------------------
+    # GAME LOOP
+    # ----------------------------------------
+    def update_game(self):
+        if self.state != "playing":
+            return
 
+        self.move_player()
+        self.move_blocks()
+        self.check_collision()
+
+        self.canvas.itemconfig(self.score_text, text=f"Score: {self.score}")
+        self.root.after(20, self.update_game)
+
+    # ----------------------------------------
+    # PLAYER MOVEMENT
+    # ----------------------------------------
     def move_player(self):
+        move_speed = 7
+        if "Left" in self.keys:
+            self.canvas.move(self.player, -move_speed, 0)
+        if "Right" in self.keys:
+            self.canvas.move(self.player, move_speed, 0)
+
+        # Clamp player within window
         x1, y1, x2, y2 = self.canvas.coords(self.player)
-        nx1 = max(0, min(WIDTH-PLAYER_W, x1 + self.dx))
-        self.canvas.coords(self.player, nx1, y1, nx1+PLAYER_W, y2)
+        if x1 < 0:
+            self.canvas.move(self.player, -x1, 0)
+        elif x2 > self.width:
+            self.canvas.move(self.player, self.width - x2, 0)
 
-    # ---------- Collision ----------
-    def intersects(self, a, b):
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-        return not (ax2 < bx1 or ax1 > bx2 or ay2 < by1 or ay1 > by2)
+    # ----------------------------------------
+    # BLOCKS
+    # ----------------------------------------
+    def spawn_block(self):
+        if self.state != "playing":
+            return
+        x = random.randint(0, self.width - BLOCK_W)
+        color = random.choice(["#FF5C58", "#FFB26B", "#FFD93D", "#00C2A8"])
+        block = self.canvas.create_rectangle(x, -BLOCK_H, x + BLOCK_W, 0, fill=color, outline="")
+        speed = random.randint(3, 6)
+        self.blocks.append((block, speed))
+        self.root.after(SPAWN_INTERVAL, self.spawn_block)
 
+    def move_blocks(self):
+        survived = []
+        for block, speed in self.blocks:
+            self.canvas.move(block, 0, speed)
+            x1, y1, x2, y2 = self.canvas.coords(block)
+            if y2 < self.height:
+                survived.append((block, speed))
+            else:
+                # Block passed successfully → +1 point
+                self.score += 1
+                self.canvas.delete(block)
+        self.blocks = survived
+
+    # ----------------------------------------
+    # COLLISION
+    # ----------------------------------------
     def check_collision(self):
-        pbox = self.canvas.bbox(self.player)
-        for b in self.blocks:
-            if self.intersects(pbox, b.bbox()):
-                if b.type == 2:  # Bonus block
-                    self.score += b.points
-                    self.canvas.delete(b.id)
-                    self.blocks.remove(b)
-                else:
-                    return True
-        return False
+        px1, py1, px2, py2 = self.canvas.coords(self.player)
+        for block, _ in self.blocks:
+            bx1, by1, bx2, by2 = self.canvas.coords(block)
+            if px1 < bx2 and px2 > bx1 and py1 < by2 and py2 > by1:
+                self.flash_effect()
+                self.end_game()
+                return
 
-    # ---------- Highscore ----------
-    def load_highscore(self):
-        if os.path.exists(HIGHSCORE_FILE):
-            with open(HIGHSCORE_FILE, "r") as f:
-                return int(f.read())
-        return 0
+    # ----------------------------------------
+    # GAME OVER
+    # ----------------------------------------
+    def flash_effect(self):
+        flash = self.canvas.create_rectangle(0, 0, self.width, self.height, fill="white", outline="")
+        self.root.update()
+        self.root.after(80, lambda: self.canvas.delete(flash))
 
-    def save_highscore(self):
-        with open(HIGHSCORE_FILE, "w") as f:
-            f.write(str(self.best))
+    def end_game(self):
+        self.state = "gameover"
+        if self.score > self.best_score:
+            self.best_score = self.score
 
-    # ---------- Main Loop ----------
-    def loop(self):
-        if self.running:
-            # spawn blocks
-            now = time.time()
-            if (now - self.last_spawn_t) * 1000 >= SPAWN_EVERY_MS:
-                self.spawn_block()
-                self.last_spawn_t = now
+        self.canvas.create_text(
+            self.width / 2,
+            self.height / 2,
+            text=f"💀 GAME OVER 💀\nScore: {self.score}\nPress SPACE to Restart",
+            fill="white",
+            font=("Helvetica", self.scale_font(18), "bold"),
+            justify="center",
+        )
+        self.canvas.itemconfig(self.best_text, text=f"Best: {self.best_score}")
 
-            # update blocks
-            for b in list(self.blocks):
-                b.step()
-                if b.offscreen():
-                    self.canvas.delete(b.id)
-                    self.blocks.remove(b)
-                    self.score += b.points
-
-            # move player
-            self.move_player()
-
-            # collision
-            if self.check_collision():
-                self.running = False
-                self.best = max(self.best, self.score)
-                self.save_highscore()
-                self.canvas.itemconfig(self.info, text=f"Game Over • Score {self.score} • Best {self.best}\nPress SPACE to restart")
-
-        # HUD
-        if self.running:
-            self.canvas.itemconfig(self.info, text=f"Score: {self.score} • Best: {self.best}")
-
-        self.root.after(TICK_MS, self.loop)
-
-# ---------- Main ----------
-def main():
-    root = tk.Tk()
-    Game(root)
-    root.mainloop()
-
+# ----------------------------------------
+# MAIN
+# ----------------------------------------
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    DodgeBlocks(root)
+    root.mainloop()
